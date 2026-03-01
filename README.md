@@ -14,15 +14,36 @@ cargo install rtk
 
 ## Installation
 
-Add to your OpenCode config (`opencode.json` or `.opencode/config.json`):
+Since the plugin is not published on npm, install it locally by referencing the repo as a file dependency.
+
+**1. Add the dependency** to `~/.config/opencode/package.json` (global) or `.opencode/package.json` (project):
 
 ```json
 {
-  "plugins": ["openrtk"]
+  "dependencies": {
+    "@opencode-ai/plugin": "*",
+    "openrtk": "file:/path/to/openrtk"
+  }
 }
 ```
 
-Or copy `src/index.ts` directly into `.opencode/plugins/` for local use.
+**2. Register the plugin** in `opencode.json` (global at `~/.config/opencode/opencode.json`) or `.opencode/opencode.json`:
+
+```json
+{
+  "plugin": ["openrtk"]
+}
+```
+
+**3. Run `bun install`** in the config directory where you added the `package.json`:
+
+```bash
+bun install
+```
+
+OpenCode will pick up the plugin on next startup.
+
+> **Note**: Do not copy `src/index.ts` directly into `.opencode/plugins/` — it imports `./rewrite` which won't be present there and will cause OpenCode to hang on startup.
 
 ## How it works
 
@@ -47,6 +68,7 @@ docker ps        ->  rtk docker ps        (65% savings)
 | Network | curl, wget |
 | Python | pytest, ruff, pip, uv pip |
 | Go | go test/build/vet, golangci-lint |
+| Elixir | mix (test, compile, credo, format, dialyzer, ecto, phx.routes, ash.info, help, and generic), iex |
 | Packages | pnpm list/ls/outdated |
 
 ### System prompt
