@@ -14,6 +14,31 @@ cargo install rtk
 
 ## Installation
 
+### Option 1: One-Click Deployment (Recommended)
+
+Run the automated installation script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gyc567/openrtk/main/install-rtk-opencode.sh | bash
+```
+
+Or download and run locally:
+
+```bash
+chmod +x install-rtk-opencode.sh
+./install-rtk-opencode.sh
+```
+
+This script will:
+- Detect your operating system (macOS/Linux)
+- Detect available package managers (Homebrew/Cargo/curl)
+- Install RTK automatically
+- Configure OpenCode plugin
+- Initialize RTK hook
+- Verify installation
+
+### Option 2: Manual Installation
+
 Install via npm:
 
 ```bash
@@ -59,11 +84,43 @@ docker ps        ->  rtk docker ps        (65% savings)
 
 Copy `opencode.md` into your project or user config to teach the model about `rtk gain` and other meta commands.
 
+## RTK Usage
+
+After installation, you can use RTK commands directly:
+
+```bash
+rtk git status          # Compact git status output
+rtk git diff           # Streamlined diff output
+rtk ls                 # Optimized directory listing
+rtk gain               # View token savings statistics
+rtk gain --graph       # Visualize savings with a graph
+rtk discover           # Analyze history for optimization opportunities
+```
+
+### Automatic Rewrite
+
+With the hook enabled, commands are automatically rewritten:
+
+- `git status` → `rtk git status`
+- `ls -la` → `rtk ls -la`
+- `cat <file>` → `rtk read <file>`
+- `cargo test` → `rtk cargo test`
+- `npm test` → `rtk vitest run`
+
 ## Development
 
 ```bash
 npm run build     # build the plugin
 npm test          # run tests
+```
+
+## Uninstall
+
+To remove RTK and OpenCode plugin:
+
+```bash
+rtk init -g --uninstall
+brew uninstall rtk  # or: cargo uninstall rtk
 ```
 
 ## License
