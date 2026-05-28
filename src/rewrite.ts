@@ -35,7 +35,7 @@ const RULES: [RegExp, (cmd: string) => string][] = [
 
   // --- File operations ---
   [/^cat\s+/, (c) => c.replace(/^cat /, "rtk read ")],
-  [/^(rg|grep)\s+/, (c) => c.replace(/^(rg|grep) /, (finder)=> `rtk ${finder} `)],
+  [/^(rg|grep)\s+/, (c) => c.replace(/^(rg|grep) /, (tool)=> `rtk ${tool} `)],
   [/^ls(\s|$)/, (c) => c.replace(/^ls/, "rtk ls")],
   [/^tree(\s|$)/, (c) => c.replace(/^tree/, "rtk tree")],
   [/^find\s+/, (c) => c.replace(/^find /, "rtk find ")],
