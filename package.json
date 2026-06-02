@@ -32,6 +32,8 @@
   },
   "devDependencies": {
     "@opencode-ai/plugin": "*",
+    "dotenv": "^8.2.0",
+    "node-fetch": "^3.3.2",
     "typescript": "^5.0.0"
   }
 }
