@@ -222,6 +222,78 @@ describe("rewrite", () => {
     })
   })
 
+  describe("compound commands", () => {
+    test("rewrites both sides of &&", () => {
+      expect(rewrite("git status && cargo build")).toBe("rtk git status && rtk cargo build")
+    })
+
+    test("rewrites all segments in a chain", () => {
+      expect(rewrite("git add . && git commit -m 'x' && git push")).toBe(
+        "rtk git add . && rtk git commit -m 'x' && rtk git push",
+      )
+    })
+
+    test("rewrites across || and ;", () => {
+      expect(rewrite("cargo test || cargo build ; ls")).toBe("rtk cargo test || rtk cargo build ; rtk ls")
+    })
+
+    test("rewrites across pipes", () => {
+      expect(rewrite("cat file | grep TODO")).toBe("rtk read file | rtk grep TODO")
+    })
+
+    test("leaves unrecognized segments untouched", () => {
+      expect(rewrite("echo hi && git status")).toBe("echo hi && rtk git status")
+    })
+
+    test("returns null when no segment matches", () => {
+      expect(rewrite("echo hi && echo bye")).toBeNull()
+    })
+
+    test("skips segments already using rtk", () => {
+      expect(rewrite("rtk git status && cargo build")).toBe("rtk git status && rtk cargo build")
+    })
+
+    test("preserves env prefix per segment", () => {
+      expect(rewrite("CI=true cargo test && git push")).toBe("CI=true rtk cargo test && rtk git push")
+    })
+
+    test("does not split on separators inside single quotes", () => {
+      expect(rewrite("git commit -m 'run && cargo build please'")).toBe(
+        "rtk git commit -m 'run && cargo build please'",
+      )
+    })
+
+    test("does not split on separators inside double quotes", () => {
+      expect(rewrite('git commit -m "a && b" && git push')).toBe('rtk git commit -m "a && b" && rtk git push')
+    })
+
+    test("does not rewrite a recognized token inside a string literal", () => {
+      expect(rewrite("echo 'a && ls foo'")).toBeNull()
+    })
+
+    test("does not split on a semicolon inside quotes", () => {
+      expect(rewrite("git commit -m 'x; ls'")).toBe("rtk git commit -m 'x; ls'")
+    })
+
+    test("an escaped double quote does not toggle quote state", () => {
+      expect(rewrite('echo "\\"" && git status')).toBe('echo "\\"" && rtk git status')
+    })
+
+    test("does not split on a separator inside an escaped double-quoted span", () => {
+      expect(rewrite('git commit -m "a \\" && b" && git push')).toBe(
+        'rtk git commit -m "a \\" && b" && rtk git push',
+      )
+    })
+
+    test("treats backslash as literal inside single quotes", () => {
+      expect(rewrite("git commit -m 'a \\ b'")).toBe("rtk git commit -m 'a \\ b'")
+    })
+
+    test("skips only the heredoc segment, not its siblings", () => {
+      expect(rewrite("git status && cat <<EOF\nx\nEOF")).toBe("rtk git status && cat <<EOF\nx\nEOF")
+    })
+  })
+
   describe("env prefix handling", () => {
     test("preserves env vars and rewrites command", () => {
       expect(rewrite("CI=true cargo test")).toBe("CI=true rtk cargo test")
