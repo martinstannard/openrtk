@@ -95,22 +95,91 @@ const RULES: [RegExp, (cmd: string) => string][] = [
 ]
 
 /**
- * Attempt to rewrite a command through RTK. Returns the rewritten command
- * string, or null if no rule matched.
+ * Split a command on top-level separators (`&&`, `||`, `;`, `|`), ignoring any
+ * that appear inside single or double quotes. The result interleaves segments
+ * (even indices) and separators (odd indices), so joining it reproduces the
+ * original string exactly. Surrounding whitespace is folded into the separator.
+ *
+ * Backslash escapes are honored outside single quotes (in unquoted text and
+ * inside double quotes, `\<ch>` is copied verbatim, so an escaped quote does
+ * not toggle quote state). Inside single quotes the backslash is literal, per
+ * POSIX shell rules.
  */
-export function rewrite(command: unknown): string | null {
-  if (typeof command !== "string") return null
+function splitTopLevel(command: string): string[] {
+  const parts: string[] = []
+  let buf = ""
+  let quote: string | null = null
 
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]
+
+    // Backslash escapes the next char everywhere except inside single quotes.
+    // Copy both chars verbatim so an escaped quote can't toggle quote state.
+    if (ch === "\\" && quote !== "'" && i + 1 < command.length) {
+      buf += ch + command[i + 1]
+      i++
+      continue
+    }
+
+    // Inside a quoted span: copy verbatim until the matching quote closes.
+    if (quote) {
+      buf += ch
+      if (ch === quote) quote = null
+      continue
+    }
+
+    if (ch === "'" || ch === '"') {
+      quote = ch
+      buf += ch
+      continue
+    }
+
+    // Detect a top-level separator. Check the two-char operators first so `||`
+    // wins over `|`.
+    const two = command.slice(i, i + 2)
+    let sep: string | null = null
+    if (two === "&&" || two === "||") sep = two
+    else if (ch === ";" || ch === "|") sep = ch
+
+    if (sep) {
+      // Consume trailing whitespace after the operator.
+      let j = i + sep.length
+      let ws = ""
+      while (j < command.length && /\s/.test(command[j])) {
+        ws += command[j]
+        j++
+      }
+      // Pull leading whitespace before the operator off the segment buffer.
+      const lead = buf.match(/\s*$/)?.[0] ?? ""
+      parts.push(buf.slice(0, buf.length - lead.length))
+      parts.push(lead + sep + ws)
+      buf = ""
+      i = j - 1
+      continue
+    }
+
+    buf += ch
+  }
+
+  parts.push(buf)
+  return parts
+}
+
+/**
+ * Rewrite a single command segment (no top-level operators). Returns the
+ * rewritten segment, or null if no rule matched.
+ */
+function rewriteSegment(segment: string): string | null {
   // Already using rtk
-  if (/^(.*\/)?rtk\s/.test(command)) return null
+  if (/^(.*\/)?rtk\s/.test(segment)) return null
 
-  // Skip heredocs
-  if (command.indexOf("<<") !== -1) return null
+  // Skip heredocs — only this segment is left untouched, not the whole command.
+  if (segment.indexOf("<<") !== -1) return null
 
   // Strip leading env-var assignments for matching, preserve for output
-  const envMatch = command.match(ENV_PREFIX_RE)
+  const envMatch = segment.match(ENV_PREFIX_RE)
   const envPrefix = envMatch ? envMatch[0] : ""
-  const body = envPrefix ? command.slice(envPrefix.length) : command
+  const body = envPrefix ? segment.slice(envPrefix.length) : segment
 
   for (const [pattern, rewriter] of RULES) {
     if (pattern.test(body)) {
@@ -119,4 +188,38 @@ export function rewrite(command: unknown): string | null {
   }
 
   return null
+}
+
+/**
+ * Attempt to rewrite a command through RTK. Splits compound commands on
+ * top-level operators (`&&`, `||`, `;`, `|`) and rewrites each segment
+ * independently; segments that don't match a rule (or contain a heredoc) are
+ * left untouched. Returns the rewritten command string, or null if no segment
+ * matched.
+ */
+export function rewrite(command: unknown): string | null {
+  if (typeof command !== "string") return null
+
+  // Split into segments and separators. Separators are interleaved at odd
+  // indices; quoted spans are never split.
+  const parts = splitTopLevel(command)
+
+  let changed = false
+  const out = parts.map((part, i) => {
+    // Odd indices are the captured separators — leave untouched.
+    if (i % 2 === 1) return part
+
+    // Preserve surrounding whitespace, rewrite the trimmed segment.
+    const leading = part.match(/^\s*/)?.[0] ?? ""
+    const trailing = part.match(/\s*$/)?.[0] ?? ""
+    const segment = part.slice(leading.length, part.length - trailing.length)
+
+    const rewritten = rewriteSegment(segment)
+    if (rewritten === null) return part
+
+    changed = true
+    return leading + rewritten + trailing
+  })
+
+  return changed ? out.join("") : null
 }
