@@ -1,234 +1,255 @@
 import { describe, expect, test } from "bun:test"
-import { rewrite } from "./rewrite"
+import { createHooks } from "./hooks"
+import { resolveRewrite, resolveRuntime, type Exec } from "./rewrite"
 
-describe("rewrite", () => {
-  describe("git commands", () => {
-    test("rewrites git status", () => {
-      expect(rewrite("git status")).toBe("rtk git status")
+function result(stdout = "", stderr = "", exitCode = 0) {
+  return { stdout, stderr, exitCode }
+}
+
+describe("resolveRuntime", () => {
+  test("resolves and validates rtk on Windows", async () => {
+    const calls: [string, string[]][] = []
+    const exec: Exec = async (command, args) => {
+      calls.push([command, args])
+      if (command === "where.exe") return result('"C:\\Program Files\\rtk.exe"\r\n')
+      return result("rtk 1.0.0")
+    }
+
+    expect(await resolveRuntime(exec, "win32")).toEqual({ command: "C:\\Program Files\\rtk.exe" })
+    expect(calls).toEqual([
+      ["where.exe", ["rtk"]],
+      ["C:\\Program Files\\rtk.exe", ["--version"]],
+    ])
+  })
+
+  test("reports unavailable rtk", async () => {
+    const exec: Exec = async () => result("", "not found", 1)
+    expect(await resolveRuntime(exec, "linux")).toEqual({ warning: "rtk unavailable: not found" })
+  })
+})
+
+describe("resolveRewrite", () => {
+  test("passes complete command as one argument", async () => {
+    const calls: [string, string[]][] = []
+    const exec: Exec = async (command, args) => {
+      calls.push([command, args])
+      return result("rtk git diff --stat; if ($?) { git diff }\n")
+    }
+
+    const command = "git diff --stat; if ($?) { git diff }"
+    expect(await resolveRewrite(exec, command, "C:\\rtk.exe")).toEqual({
+      changed: true,
+      original: command,
+      rewritten: "rtk git diff --stat; if ($?) { git diff }",
+      exitCode: 0,
     })
+    expect(calls).toEqual([["C:\\rtk.exe", ["rewrite", command]]])
+  })
 
-    test("rewrites git status with flags", () => {
-      expect(rewrite("git status -s")).toBe("rtk git status -s")
+  test("accepts rtk rewrite exit code 3", async () => {
+    const exec: Exec = async () => result("rtk git status", "", 3)
+    expect((await resolveRewrite(exec, "git status", "rtk")).changed).toBe(true)
+  })
+
+  test("leaves no-match and denied commands unchanged", async () => {
+    const noMatch: Exec = async () => result("", "", 1)
+    const denied: Exec = async () => result("", "unsafe rewrite", 2)
+    expect(await resolveRewrite(noMatch, "echo ok", "rtk")).toEqual({
+      changed: false,
+      original: "echo ok",
+      rewritten: "echo ok",
+      exitCode: 1,
     })
-
-    test("rewrites git diff", () => {
-      expect(rewrite("git diff")).toBe("rtk git diff")
-    })
-
-    test("rewrites git log", () => {
-      expect(rewrite("git log --oneline -10")).toBe("rtk git log --oneline -10")
-    })
-
-    test("rewrites git push", () => {
-      expect(rewrite("git push origin main")).toBe("rtk git push origin main")
-    })
-
-    test("rewrites git commit", () => {
-      expect(rewrite('git commit -m "fix"')).toBe('rtk git commit -m "fix"')
-    })
-
-    test("rewrites git branch", () => {
-      expect(rewrite("git branch -a")).toBe("rtk git branch -a")
-    })
-
-    test("rewrites git fetch", () => {
-      expect(rewrite("git fetch --all")).toBe("rtk git fetch --all")
-    })
-
-    test("rewrites git stash", () => {
-      expect(rewrite("git stash pop")).toBe("rtk git stash pop")
-    })
-
-    test("rewrites git show", () => {
-      expect(rewrite("git show HEAD")).toBe("rtk git show HEAD")
+    expect(await resolveRewrite(denied, "git push", "rtk")).toEqual({
+      changed: false,
+      original: "git push",
+      rewritten: "git push",
+      exitCode: 2,
+      warning: "unsafe rewrite",
     })
   })
 
-  describe("github cli", () => {
-    test("rewrites gh pr", () => {
-      expect(rewrite("gh pr list")).toBe("rtk gh pr list")
-    })
-
-    test("rewrites gh issue", () => {
-      expect(rewrite("gh issue view 123")).toBe("rtk gh issue view 123")
-    })
-
-    test("rewrites gh run", () => {
-      expect(rewrite("gh run list")).toBe("rtk gh run list")
-    })
-
-    test("does not rewrite gh auth", () => {
-      expect(rewrite("gh auth login")).toBeNull()
-    })
+  test("does not invoke rewrite for direct rtk commands", async () => {
+    let invoked = false
+    const exec: Exec = async () => {
+      invoked = true
+      return result()
+    }
+    expect((await resolveRewrite(exec, "rtk git diff", "rtk")).changed).toBe(false)
+    expect(invoked).toBe(false)
   })
 
-  describe("cargo commands", () => {
-    test("rewrites cargo test", () => {
-      expect(rewrite("cargo test")).toBe("rtk cargo test")
+  test("fails open on timeout and empty rewrite output", async () => {
+    const timeout: Exec = async () => {
+      throw new Error("command timed out after 3000 ms")
+    }
+    const empty: Exec = async () => result("", "", 3)
+    expect(await resolveRewrite(timeout, "git diff", "rtk")).toEqual({
+      changed: false,
+      original: "git diff",
+      rewritten: "git diff",
+      exitCode: -1,
+      warning: "rtk rewrite failed: command timed out after 3000 ms",
     })
-
-    test("rewrites cargo build", () => {
-      expect(rewrite("cargo build --release")).toBe("rtk cargo build --release")
-    })
-
-    test("rewrites cargo clippy", () => {
-      expect(rewrite("cargo clippy")).toBe("rtk cargo clippy")
-    })
-  })
-
-  describe("file operations", () => {
-    test("rewrites cat to rtk read", () => {
-      expect(rewrite("cat README.md")).toBe("rtk read README.md")
-    })
-
-    test("rewrites grep", () => {
-      expect(rewrite("grep -r TODO src/")).toBe("rtk grep -r TODO src/")
-    })
-
-    test("rewrites rg", () => {
-      expect(rewrite("rg pattern")).toBe("rtk grep pattern")
-    })
-
-    test("rewrites ls", () => {
-      expect(rewrite("ls -la")).toBe("rtk ls -la")
-    })
-
-    test("rewrites tree", () => {
-      expect(rewrite("tree src/")).toBe("rtk tree src/")
-    })
-
-    test("rewrites find", () => {
-      expect(rewrite("find . -name '*.ts'")).toBe("rtk find . -name '*.ts'")
+    expect(await resolveRewrite(empty, "git diff", "rtk")).toEqual({
+      changed: false,
+      original: "git diff",
+      rewritten: "git diff",
+      exitCode: 3,
+      warning: "rtk rewrite returned no command",
     })
   })
+})
 
-  describe("js/ts tooling", () => {
-    test("rewrites vitest", () => {
-      expect(rewrite("vitest run")).toBe("rtk vitest run")
+describe("plugin lifecycle", () => {
+  function setup(rewritten = "rtk git diff") {
+    const notices: string[] = []
+    const exec: Exec = async (command, args) => {
+      if (command === "where.exe" || command === "which") return result("C:\\rtk.exe\n")
+      if (args[0] === "--version") return result("rtk 1.0.0")
+      return result(`${rewritten}\n`)
+    }
+    const hooks = createHooks(exec, async (message) => {
+      notices.push(message)
     })
+    return { hooks, notices }
+  }
 
-    test("rewrites npx vitest", () => {
-      expect(rewrite("npx vitest")).toBe("rtk vitest run")
-    })
+  test("executes rewrite while restoring model-facing command", async () => {
+    const { hooks, notices } = setup()
+    const args = { command: "git diff", description: "Get changes" }
+    await hooks["tool.execute.before"]?.(
+      { tool: "bash", sessionID: "session", callID: "call" },
+      { args },
+    )
+    expect(args.command).toBe("rtk git diff")
 
-    test("rewrites npm test", () => {
-      expect(rewrite("npm test")).toBe("rtk npm test")
+    const output = { title: "Get changes", output: "compressed diff", metadata: { exit: 0 } }
+    await hooks["tool.execute.after"]?.(
+      { tool: "bash", sessionID: "session", callID: "call", args },
+      output,
+    )
+    expect(args.command).toBe("git diff")
+    expect(output.output).toBe("compressed diff")
+    expect(output.metadata).toEqual({
+      exit: 0,
+      openrtk: { original: "git diff", rewritten: "rtk git diff" },
     })
-
-    test("rewrites npm run", () => {
-      expect(rewrite("npm run build")).toBe("rtk npm build")
-    })
-
-    test("rewrites tsc", () => {
-      expect(rewrite("tsc --noEmit")).toBe("rtk tsc --noEmit")
-    })
-
-    test("rewrites eslint", () => {
-      expect(rewrite("eslint src/")).toBe("rtk lint src/")
-    })
-
-    test("rewrites playwright", () => {
-      expect(rewrite("npx playwright test")).toBe("rtk playwright test")
-    })
+    expect(notices).toContain("git diff -> rtk git diff")
   })
 
-  describe("containers", () => {
-    test("rewrites docker compose", () => {
-      expect(rewrite("docker compose up")).toBe("rtk docker compose up")
-    })
+  test("restores persisted rewritten commands before model conversion", async () => {
+    const { hooks } = setup()
+    const args = { command: "git diff" }
+    await hooks["tool.execute.before"]?.(
+      { tool: "bash", sessionID: "session", callID: "call" },
+      { args },
+    )
 
-    test("rewrites docker ps", () => {
-      expect(rewrite("docker ps")).toBe("rtk docker ps")
+    const part = {
+      id: "part",
+      sessionID: "session",
+      messageID: "message",
+      type: "tool" as const,
+      tool: "bash",
+      callID: "call",
+      state: {
+        status: "running" as const,
+        input: { command: "rtk git diff" },
+        time: { start: Date.now() },
+      },
+    }
+    await hooks["experimental.chat.messages.transform"]?.({}, {
+      messages: [{ info: {} as never, parts: [part] }],
     })
-
-    test("rewrites kubectl get", () => {
-      expect(rewrite("kubectl get pods")).toBe("rtk kubectl get pods")
-    })
+    expect(part.state.input.command).toBe("git diff")
   })
 
-  describe("python", () => {
-    test("rewrites pytest", () => {
-      expect(rewrite("pytest tests/")).toBe("rtk pytest tests/")
-    })
+  test("uses persisted provenance after successful call state is released", async () => {
+    const { hooks } = setup()
+    const args = { command: "git diff" }
+    await hooks["tool.execute.before"]?.(
+      { tool: "bash", sessionID: "session", callID: "call" },
+      { args },
+    )
+    const output = { title: "", output: "diff", metadata: { exit: 0 } }
+    await hooks["tool.execute.after"]?.(
+      { tool: "bash", sessionID: "session", callID: "call", args },
+      output,
+    )
 
-    test("rewrites python -m pytest", () => {
-      expect(rewrite("python -m pytest")).toBe("rtk pytest")
+    const part = {
+      id: "part",
+      sessionID: "session",
+      messageID: "message",
+      type: "tool" as const,
+      tool: "bash",
+      callID: "call",
+      state: {
+        status: "completed" as const,
+        input: { command: "rtk git diff" },
+        output: "diff",
+        title: "",
+        metadata: output.metadata,
+        time: { start: Date.now(), end: Date.now() },
+      },
+    }
+    await hooks["experimental.chat.messages.transform"]?.({}, {
+      messages: [{ info: {} as never, parts: [part] }],
     })
-
-    test("rewrites ruff check", () => {
-      expect(rewrite("ruff check .")).toBe("rtk ruff check .")
-    })
+    expect(part.state.input.command).toBe("git diff")
   })
 
-  describe("go", () => {
-    test("rewrites go test", () => {
-      expect(rewrite("go test ./...")).toBe("rtk go test ./...")
-    })
+  test("marks silent success and exposes command failures", async () => {
+    const success = setup()
+    const successArgs = { command: "git diff" }
+    await success.hooks["tool.execute.before"]?.(
+      { tool: "bash", sessionID: "session", callID: "success" },
+      { args: successArgs },
+    )
+    const successOutput = { title: "", output: "", metadata: { exit: 0 } }
+    await success.hooks["tool.execute.after"]?.(
+      { tool: "bash", sessionID: "session", callID: "success", args: successArgs },
+      successOutput,
+    )
+    expect(successOutput.output).toBe("(no output)")
 
-    test("rewrites go build", () => {
-      expect(rewrite("go build")).toBe("rtk go build")
-    })
+    const failure = setup()
+    const failureArgs = { command: "git diff" }
+    await failure.hooks["tool.execute.before"]?.(
+      { tool: "bash", sessionID: "session", callID: "failure" },
+      { args: failureArgs },
+    )
+    const failureOutput = { title: "", output: "fatal", metadata: { exit: 7 } }
+    await failure.hooks["tool.execute.after"]?.(
+      { tool: "bash", sessionID: "session", callID: "failure", args: failureArgs },
+      failureOutput,
+    )
+    expect(failureOutput.output).toBe("fatal\n\nCommand exited with code 7")
   })
 
-  describe("elixir / phoenix / ash", () => {
-    test("rewrites mix phx.routes", () => {
-      expect(rewrite("mix phx.routes")).toBe("rtk --cache mix phx.routes")
-    })
-
-    test("rewrites mix ash.info", () => {
-      expect(rewrite("mix ash.info MyResource")).toBe("rtk --cache mix ash.info MyResource")
-    })
-
-    test("rewrites mix test", () => {
-      expect(rewrite("mix test")).toBe("rtk mix test")
-    })
-
-    test("rewrites mix compile", () => {
-      expect(rewrite("mix compile")).toBe("rtk mix compile")
-    })
-
-    test("rewrites mix ecto.migrate", () => {
-      expect(rewrite("mix ecto.migrate")).toBe("rtk mix ecto.migrate")
-    })
-
-    test("rewrites mix ecto.migrations", () => {
-      expect(rewrite("mix ecto.migrations")).toBe("rtk mix ecto.migrations")
-    })
-
-    test("rewrites generic mix commands", () => {
-      expect(rewrite("mix deps.get")).toBe("rtk mix deps.get")
-    })
-
-    test("rewrites iex sessions", () => {
-      expect(rewrite("iex -S mix")).toBe("rtk iex -S mix")
-    })
-
-    test("rewrites mix help", () => {
-      expect(rewrite("mix help phx.gen.html")).toBe("rtk --cache mix help phx.gen.html")
-    })
-  })
-
-  describe("skip conditions", () => {
-    test("skips commands already using rtk", () => {
-      expect(rewrite("rtk git status")).toBeNull()
-    })
-
-    test("skips commands with heredocs", () => {
-      expect(rewrite("cat <<EOF\nhello\nEOF")).toBeNull()
-    })
-
-    test("skips unrecognized commands", () => {
-      expect(rewrite("echo hello")).toBeNull()
-    })
-  })
-
-  describe("env prefix handling", () => {
-    test("preserves env vars and rewrites command", () => {
-      expect(rewrite("CI=true cargo test")).toBe("CI=true rtk cargo test")
-    })
-
-    test("preserves multiple env vars", () => {
-      expect(rewrite("FOO=1 BAR=2 git status")).toBe("FOO=1 BAR=2 rtk git status")
-    })
+  test("keeps parallel calls isolated", async () => {
+    const exec: Exec = async (command, args) => {
+      if (command === "where.exe" || command === "which") return result("rtk\n")
+      if (args[0] === "--version") return result("rtk 1.0.0")
+      return result(`rtk ${args[1]}\n`)
+    }
+    const hooks = createHooks(exec)
+    const first = { command: "git diff" }
+    const second = { command: "git status" }
+    await Promise.all([
+      hooks["tool.execute.before"]?.({ tool: "bash", sessionID: "s", callID: "1" }, { args: first }),
+      hooks["tool.execute.before"]?.({ tool: "bash", sessionID: "s", callID: "2" }, { args: second }),
+    ])
+    await hooks["tool.execute.after"]?.(
+      { tool: "bash", sessionID: "s", callID: "2", args: second },
+      { title: "", output: "ok", metadata: { exit: 0 } },
+    )
+    await hooks["tool.execute.after"]?.(
+      { tool: "bash", sessionID: "s", callID: "1", args: first },
+      { title: "", output: "ok", metadata: { exit: 0 } },
+    )
+    expect(first.command).toBe("git diff")
+    expect(second.command).toBe("git status")
   })
 })

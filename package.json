@@ -6,8 +6,7 @@
   "types": "lib/index.d.ts",
   "type": "module",
   "files": [
-    "lib",
-    "opencode.md"
+    "lib"
   ],
   "scripts": {
     "build": "tsc",
@@ -32,6 +31,7 @@
   },
   "devDependencies": {
     "@opencode-ai/plugin": "*",
+    "@types/node": "^26.1.1",
     "typescript": "^5.0.0"
   }
 }
