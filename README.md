@@ -20,19 +20,26 @@ Install via npm:
 npm install openrtk
 ```
 
-Then add to your OpenCode config (`opencode.json` or `.opencode/config.json`):
+Then add to your OpenCode config (`opencode.json` or `.opencode/opencode.json`):
 
 ```json
 {
-  "plugin": ["openrtk"]
+  "plugins": ["openrtk"]
 }
 ```
 
-Or copy `src/index.ts` directly into `.opencode/plugins/` for local use.
+Or point your config at the `src/` directory in a local checkout. This repo loads itself through `.opencode/plugins/openrtk.ts`.
+
+## OpenCode compatibility
+
+OpenCode 2 replaced the plugin API, and V1 plugins no longer load there. This package exports both entrypoints from one module: OpenCode 2 reads `id`/`setup`, OpenCode 1 calls `server()`. No configuration change is needed on either version.
 
 ## How it works
 
-The plugin hooks into OpenCode's `tool.execute.before` event and rewrites shell commands to go through RTK before execution. This is fully transparent to the model.
+The plugin rewrites shell commands to go through RTK before execution. This is fully transparent to the model.
+
+- OpenCode 2: a `create.before` hook on the shell domain.
+- OpenCode 1: a `tool.execute.before` hook, filtered to the `bash` and `shell` tools.
 
 ```
 git status       ->  rtk git status       (72% savings)

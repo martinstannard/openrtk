@@ -25,13 +25,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/martins/openrtk"
-  },
-  "peerDependencies": {
-    "@opencode-ai/plugin": "*"
+    "url": "https://github.com/martinstannard/openrtk"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "*",
+    "@opencode/plugin": "^2.0.3",
+    "@types/node": "^22.0.0",
     "typescript": "^5.0.0"
   }
 }
